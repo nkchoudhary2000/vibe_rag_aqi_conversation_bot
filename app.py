@@ -95,7 +95,7 @@ def get_vectorstore(splits, api_key, index_name):
         st.error("Pinecone API Key is missing.")
         return None
         
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2", model_kwargs={'device': 'cpu'})
     
     try:
         # initialize Pinecone client
@@ -138,7 +138,7 @@ def load_vectorstore(api_key, index_name):
     if not api_key:
         return None
         
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2", model_kwargs={'device': 'cpu'})
     
     try:
         pc = Pinecone(api_key=api_key)
