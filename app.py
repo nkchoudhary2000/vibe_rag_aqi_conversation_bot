@@ -133,6 +133,30 @@ def get_vectorstore(splits, api_key, index_name):
         st.error(f"Error connecting to Pinecone: {e}")
         return None
 
+def load_vectorstore(api_key, index_name):
+    """Connect to an existing Pinecone Vector Store."""
+    if not api_key:
+        return None
+        
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    
+    try:
+        pc = Pinecone(api_key=api_key)
+        existing_indexes = [i.name for i in pc.list_indexes()]
+        
+        if index_name in existing_indexes:
+            vectorstore = PineconeVectorStore.from_existing_index(
+                index_name=index_name,
+                embedding=embeddings,
+                pinecone_api_key=api_key
+            )
+            return vectorstore
+        else:
+            return None
+    except Exception as e:
+        # st.error(f"Error connecting to existing Pinecone index: {e}") # Suppress error on auto-load
+        return None
+
 def get_llm_chain(vector_store, api_key):
     """Create the RetrievalQA chain."""
     if not api_key:
@@ -163,6 +187,14 @@ def get_llm_chain(vector_store, api_key):
 
 # --- Main Application Logic ---
 
+# Auto-connect to existing index if not currently connected
+if pinecone_api_key and pinecone_index_name and st.session_state.vector_store is None:
+    with st.spinner("Checking for existing Knowledge Base..."):
+        existing_store = load_vectorstore(pinecone_api_key, pinecone_index_name)
+        if existing_store:
+            st.session_state.vector_store = existing_store
+            st.toast(f"Connected to existing knowledge base '{pinecone_index_name}'!", icon="✅")
+
 if process_button and uploaded_file:
     if not groq_api_key or not pinecone_api_key:
         st.error("Please provide valid API keys in the sidebar.")
@@ -170,11 +202,20 @@ if process_button and uploaded_file:
         with st.spinner("Processing PDF... This may take a moment."):
             splits = process_pdf(uploaded_file)
             if splits:
-                st.session_state.vector_store = get_vectorstore(splits, pinecone_api_key, pinecone_index_name)
                 if st.session_state.vector_store:
-                    st.success("PDF Processed and stored in Pinecone!")
+                    # Append to existing store
+                    try:
+                        st.session_state.vector_store.add_documents(splits)
+                        st.success("PDF processed and added to existing knowledge base!")
+                    except Exception as e:
+                        st.error(f"Error updating knowledge base: {e}")
                 else:
-                    st.error("Failed to create vector store.")
+                    # Create new store
+                    st.session_state.vector_store = get_vectorstore(splits, pinecone_api_key, pinecone_index_name)
+                    if st.session_state.vector_store:
+                        st.success("PDF Processed and stored in Pinecone!")
+                    else:
+                        st.error("Failed to create vector store.")
 
 # --- Chat Interface ---
 
