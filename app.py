@@ -29,43 +29,27 @@ st.markdown("""
 st.title("🌿 EcoGuide - Climate RAG Chatbot")
 
 # --- Configuration & Secrets ---
-# Try to load secrets from st.secrets, otherwise expect them in environment
-# Try to load from environment first, then secrets (handling missing file)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    try:
-        GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
-    except FileNotFoundError:
-        pass
-
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-if not PINECONE_API_KEY:
-    try:
-        PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY")
-    except FileNotFoundError:
-        pass
-
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "ecoguide")
-if PINECONE_INDEX_NAME == "ecoguide": # check if default or needs secrets
-    try:
-        PINECONE_INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", "ecoguide")
-    except FileNotFoundError:
-        pass
+# Load defaults from environment/secrets if available, but do not enforce them here.
+env_groq_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
+env_pinecone_key = os.getenv("PINECONE_API_KEY") or st.secrets.get("PINECONE_API_KEY", "")
+env_pinecone_index = os.getenv("PINECONE_INDEX_NAME") or st.secrets.get("PINECONE_INDEX_NAME", "ecoguide")
 
 # --- Sidebar ---
 with st.sidebar:
+    st.header("Settings")
+    
+    st.markdown("### API Configuration")
+    st.info("Enter your own API keys to use this app. Keys are not stored persistently.")
+
+    # Input fields for API keys (use env values as defaults if they exist)
+    groq_api_key = st.text_input("Groq API Key", type="password", value=env_groq_key)
+    pinecone_api_key = st.text_input("Pinecone API Key", type="password", value=env_pinecone_key)
+    pinecone_index_name = st.text_input("Pinecone Index Name", value=env_pinecone_index)
+
+    st.divider()
+    
     st.header("Upload Document")
     uploaded_file = st.file_uploader("Upload a Climate PDF", type="pdf")
-    
-    # Optional: Allow user to override keys if not in secrets
-    with st.expander("Settings"):
-        if not GROQ_API_KEY:
-            GROQ_API_KEY = st.text_input("Groq API Key", type="password")
-        if not PINECONE_API_KEY:
-            PINECONE_API_KEY = st.text_input("Pinecone API Key", type="password")
-        if not PINECONE_INDEX_NAME:
-            PINECONE_INDEX_NAME = st.text_input("Pinecone Index Name", value="ecoguide")
-
     process_button = st.button("Process PDF")
 
 # --- Initialize Session State ---
@@ -77,7 +61,7 @@ if "vector_store" not in st.session_state:
 # --- Helper Functions ---
 
 def process_pdf(uploaded_file):
-    """Reads PDF, splits text, and upserts to Pinecone."""
+    """Reads PDF, splits text."""
     if not uploaded_file:
         return None
     
@@ -105,9 +89,9 @@ def process_pdf(uploaded_file):
         st.error(f"Error processing PDF: {e}")
         return None
 
-def get_vectorstore(splits):
+def get_vectorstore(splits, api_key, index_name):
     """Create or retrieve Pinecone Vector Store."""
-    if not PINECONE_API_KEY:
+    if not api_key:
         st.error("Pinecone API Key is missing.")
         return None
         
@@ -115,16 +99,16 @@ def get_vectorstore(splits):
     
     try:
         # initialize Pinecone client
-        pc = Pinecone(api_key=PINECONE_API_KEY)
+        pc = Pinecone(api_key=api_key)
         
         # Check if index exists
         existing_indexes = [i.name for i in pc.list_indexes()]
         
-        if PINECONE_INDEX_NAME not in existing_indexes:
-            st.warning(f"Index '{PINECONE_INDEX_NAME}' not found. Attempting to create it...")
+        if index_name not in existing_indexes:
+            st.warning(f"Index '{index_name}' not found. Attempting to create it...")
             try:
                 pc.create_index(
-                    name=PINECONE_INDEX_NAME,
+                    name=index_name,
                     dimension=384,
                     metric="cosine",
                     spec=ServerlessSpec(
@@ -132,7 +116,7 @@ def get_vectorstore(splits):
                         region="us-east-1"
                     )
                 )
-                st.info(f"Index '{PINECONE_INDEX_NAME}' created successfully. Waiting for initialization...")
+                st.info(f"Index '{index_name}' created successfully. Waiting for initialization...")
                 time.sleep(10) # Wait for index to be ready
             except Exception as create_error:
                 st.error(f"Failed to create index: {create_error}")
@@ -141,22 +125,22 @@ def get_vectorstore(splits):
         vectorstore = PineconeVectorStore.from_documents(
             documents=splits,
             embedding=embeddings,
-            index_name=PINECONE_INDEX_NAME,
-            pinecone_api_key=PINECONE_API_KEY
+            index_name=index_name,
+            pinecone_api_key=api_key
         )
         return vectorstore
     except Exception as e:
         st.error(f"Error connecting to Pinecone: {e}")
         return None
 
-def get_llm_chain(vector_store):
+def get_llm_chain(vector_store, api_key):
     """Create the RetrievalQA chain."""
-    if not GROQ_API_KEY:
+    if not api_key:
         st.error("Groq API Key is missing.")
         return None
         
     llm = ChatGroq(
-        groq_api_key=GROQ_API_KEY,
+        groq_api_key=api_key,
         model_name="llama-3.1-8b-instant"
     )
     
@@ -180,13 +164,13 @@ def get_llm_chain(vector_store):
 # --- Main Application Logic ---
 
 if process_button and uploaded_file:
-    if not GROQ_API_KEY or not PINECONE_API_KEY:
-        st.error("Please provide valid API keys in settings or secrets.toml.")
+    if not groq_api_key or not pinecone_api_key:
+        st.error("Please provide valid API keys in the sidebar.")
     else:
         with st.spinner("Processing PDF... This may take a moment."):
             splits = process_pdf(uploaded_file)
             if splits:
-                st.session_state.vector_store = get_vectorstore(splits)
+                st.session_state.vector_store = get_vectorstore(splits, pinecone_api_key, pinecone_index_name)
                 if st.session_state.vector_store:
                     st.success("PDF Processed and stored in Pinecone!")
                 else:
@@ -211,12 +195,18 @@ if user_input:
             
         # Generate response
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                chain = get_llm_chain(st.session_state.vector_store)
-                if chain:
-                    response_dict = chain.invoke({"input": user_input})
-                    response_text = response_dict['answer']
-                    st.write(response_text)
-                    
-                    # Update History
-                    st.session_state.chat_history.append({"role": "assistant", "content": response_text})
+            if not groq_api_key:
+                st.error("Groq API Key is missing. Please add it in the sidebar.")
+            else:
+                with st.spinner("Thinking..."):
+                    chain = get_llm_chain(st.session_state.vector_store, groq_api_key)
+                    if chain:
+                        try:
+                            response_dict = chain.invoke({"input": user_input})
+                            response_text = response_dict['answer']
+                            st.write(response_text)
+                            
+                            # Update History
+                            st.session_state.chat_history.append({"role": "assistant", "content": response_text})
+                        except Exception as e:
+                            st.error(f"Error generating response: {e}")
