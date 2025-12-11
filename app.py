@@ -187,13 +187,22 @@ def get_llm_chain(vector_store, api_key):
 
 # --- Main Application Logic ---
 
+# Initialize tracked keys to avoid redundant checks
+if "attempted_keys" not in st.session_state:
+    st.session_state.attempted_keys = set()
+
 # Auto-connect to existing index if not currently connected
 if pinecone_api_key and pinecone_index_name and st.session_state.vector_store is None:
-    with st.spinner("Checking for existing Knowledge Base..."):
-        existing_store = load_vectorstore(pinecone_api_key, pinecone_index_name)
-        if existing_store:
-            st.session_state.vector_store = existing_store
-            st.toast(f"Connected to existing knowledge base '{pinecone_index_name}'!", icon="✅")
+    current_keys = (pinecone_api_key, pinecone_index_name)
+    if current_keys not in st.session_state.attempted_keys:
+        with st.spinner("Checking for existing Knowledge Base..."):
+            existing_store = load_vectorstore(pinecone_api_key, pinecone_index_name)
+            if existing_store:
+                st.session_state.vector_store = existing_store
+                st.toast(f"Connected to existing knowledge base '{pinecone_index_name}'!", icon="✅")
+            
+            # Mark as attempted so we don't spam checks on every rerun
+            st.session_state.attempted_keys.add(current_keys)
 
 if process_button and uploaded_file:
     if not groq_api_key or not pinecone_api_key:
